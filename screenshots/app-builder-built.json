@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "ヴェール",
+      "hasCanvas": false,
+      "bodyTextLen": 319,
+      "bodyTextHash": "45f8be3ab1ca609395464dd0534d99c43582897dc52341f9a1eee7a9269bbb38",
+      "bodyTextPrefix": "VEIL ヴェール フォルダごと一括で局部をモザイク。画像は端末内だけで処理します。 入力 検出モデル イラスト 実写 画像やフ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "ヴェール",
+      "hasCanvas": false,
+      "bodyTextLen": 283,
+      "bodyTextHash": "af6105d2b8e1e99bedee7078371052b5e0bed9b8a207048eaa39917f35141384",
+      "bodyTextPrefix": "VEIL ヴェール 入力 検出モデル イラスト 実写 画像やフォルダをドロップ JPEG / PNG / WebP ・ 複数枚・",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": false,
+  "baselineReasons": []
+}
