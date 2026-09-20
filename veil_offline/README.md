@@ -8,14 +8,15 @@
 Python 3.10 以上が必要です。
 
 **Windows:** `run.bat` をダブルクリック。  
-初回だけ `pip` がライブラリを取りにいくのでネットが要ります。2回目からオフラインで動きます。
+初回だけこのフォルダに `.venv` を作り、ライブラリをそこに入れます（ネットが要ります）。2回目からオフラインです。他の Python 環境には触れません。
 
 または:
 
 ```bash
 cd veil_offline
-python -m pip install -r requirements.txt
-python app.py
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python app.py
 ```
 
 ブラウザで `http://127.0.0.1:8080` が開きます。

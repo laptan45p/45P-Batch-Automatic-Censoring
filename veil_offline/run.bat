@@ -8,6 +8,7 @@ set GRADIO_ANALYTICS_ENABLED=False
 set HF_HUB_OFFLINE=1
 set TRANSFORMERS_OFFLINE=1
 set PY=
+set VPY=%cd%\.venv\Scripts\python.exe
 
 where py >nul 2>&1
 if not errorlevel 1 (
@@ -44,11 +45,22 @@ if not defined PY (
   exit /b 1
 )
 
-%PY% -c "import gradio,onnxruntime,PIL,numpy" >nul 2>&1
+if not exist "%VPY%" (
+  echo Creating virtual environment in .venv
+  %PY% -m venv .venv
+  if errorlevel 1 (
+    echo venv create failed. python3-venv may be missing.
+    pause
+    exit /b 1
+  )
+)
+
+"%VPY%" -c "import gradio,onnxruntime,PIL,numpy" >nul 2>&1
 if errorlevel 1 (
-  echo First run: installing libraries. Internet required.
-  echo Shokai dake library wo iremasu.
-  %PY% -m pip install -r requirements.txt
+  echo First run: installing libraries into .venv
+  echo Shokai dake library wo iremasu. Internet required.
+  "%VPY%" -m pip install --upgrade pip
+  "%VPY%" -m pip install -r requirements.txt
   if errorlevel 1 (
     echo pip install failed.
     pause
@@ -57,7 +69,7 @@ if errorlevel 1 (
 )
 
 echo Starting Veil. Close this window to stop.
-%PY% app.py
+"%VPY%" app.py
 if errorlevel 1 (
   echo app.py failed.
 )
