@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-set PORT=8080
+set PORT=7863
 set HOST=127.0.0.1
 set GRADIO_ANALYTICS_ENABLED=False
 set HF_HUB_OFFLINE=1

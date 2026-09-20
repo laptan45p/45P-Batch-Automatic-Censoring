@@ -1,6 +1,6 @@
 #!/bin/sh
 cd "$(dirname "$0")"
-export PORT="${PORT:-8080}"
+export PORT="${PORT:-7863}"
 export HOST="${HOST:-127.0.0.1}"
 export GRADIO_ANALYTICS_ENABLED=False
 export HF_HUB_OFFLINE=1

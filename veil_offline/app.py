@@ -394,7 +394,7 @@ def build() -> gr.Blocks:
 
 def main() -> None:
     threading.Thread(target=lambda: warmup("illust"), daemon=True).start()
-    port = int(os.environ.get("PORT", "8080"))
+    port = int(os.environ.get("PORT", "7863"))
     host = os.environ.get("HOST", "127.0.0.1")
     if host in ("127.0.0.1", "localhost"):
         threading.Timer(
