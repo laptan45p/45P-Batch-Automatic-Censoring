@@ -156,7 +156,7 @@ def process(
         raise gr.Error(str(e)) from e
 
     if not paths:
-        raise gr.Error("画像がありません。ファイル、フォルダ、またはフォルダのパスを指定してください")
+        raise gr.Error("画像がありません。ファイルを選ぶか、フォルダの場所を指定してください")
 
     truncated = f"\n（上限 {MAX_FILES} 枚。超えた分はスキップ）" if len(paths) >= MAX_FILES else ""
 
@@ -292,7 +292,7 @@ def build() -> gr.Blocks:
             with gr.Row():
                 gr.HTML(
                     "<p style='margin:0;font-size:14px;line-height:1.5'>"
-                    "PCでオフライン実行する一式です。"
+                    "パソコンに入れてオフラインで使う一式です。"
                     "<a href='/veil-offline.zip' download='veil-offline.zip' "
                     "style='color:#60a5fa;font-weight:600'>veil-offline.zip をダウンロード（約21MB）</a>"
                     "</p>"
@@ -307,8 +307,8 @@ def build() -> gr.Blocks:
                 )
         gr.Markdown(
             "### ヴェール\n"
-            "イラスト・実写の局部を検出してモザイク。"
-            "**処理は起動しているこのマシンの中だけ**です。"
+            "イラストと実写の局部を検出してモザイクをかけます。"
+            "**このパソコンの中だけで処理します。**"
         )
         with gr.Row():
             with gr.Column(scale=4, min_width=280):
@@ -320,17 +320,17 @@ def build() -> gr.Blocks:
                 )
                 folder_upload = gr.File(label="フォルダを選ぶ", file_count="directory")
                 folder_path = gr.Textbox(
-                    label="フォルダのパス（PCで起動したとき）",
-                    placeholder=r"C:\Pictures\batch  または  /Users/you/pics",
-                    info="自分のPCで動かしているとき、エクスプローラのパスを貼れます。",
+                    label="フォルダの場所（このパソコンで使うとき）",
+                    placeholder=r"C:\Pictures\batch",
+                    info="エクスプローラのアドレスバーをコピーして貼り付けてください。",
                 )
                 output_path = gr.Textbox(
-                    label="保存先（空なら 入力フォルダ/_mosaic）",
+                    label="保存先（空なら、入力フォルダの _mosaic）",
                     placeholder=r"C:\Pictures\batch\_mosaic",
                 )
                 recursive = gr.Checkbox(label="サブフォルダも含める", value=True)
                 save_local = gr.Checkbox(
-                    label="フォルダへ直接保存する（パス指定時）",
+                    label="指定したフォルダに保存する",
                     value=True,
                 )
                 parts = gr.CheckboxGroup(
@@ -346,10 +346,10 @@ def build() -> gr.Blocks:
                 run = gr.Button("モザイクを実行", variant="primary")
             with gr.Column(scale=8, min_width=360):
                 status = gr.Markdown(
-                    "PCではフォルダのパスを貼るか、フォルダを選んで実行してください。"
+                    "フォルダを選ぶか、場所を貼り付けてから実行してください。"
                 )
                 slider = gr.ImageSlider(
-                    label="比較（左=元 / 右にドラッグ=処理後）",
+                    label="比較（左が元、右へドラッグすると処理後）",
                     type="filepath",
                     format="png",
                     max_height=630,

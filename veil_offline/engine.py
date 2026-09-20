@@ -122,7 +122,7 @@ def is_image_path(path: Path) -> bool:
 def collect_from_folder(folder: str | Path, recursive: bool = True) -> list[Path]:
     root = Path(folder).expanduser()
     if not root.is_dir():
-        raise FileNotFoundError(f"フォルダがありません: {root}")
+        raise FileNotFoundError(f"フォルダが見つかりません: {root}")
     it = root.rglob("*") if recursive else root.glob("*")
     files: list[Path] = []
     for p in it:
