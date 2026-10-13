@@ -6,6 +6,8 @@
 
 Windowsでは `run.bat` を実行してください。Python 3.10以上が必要です。初回はこのフォルダの `.venv` に必要なライブラリを導入するため、ネット接続が必要です。
 
+[GitHub Releases](https://github.com/laptan45p/45P-Batch-Automatic-Censoring/releases/latest) の通常配布用 `veil-offline.zip` は、元の検出モデル2つを同梱しています。解凍したフォルダ内の `run.bat` で起動できます。Python本体は同梱していません。
+
 差し替え用ZIPを使用する場合は、現在使っているフォルダへ中身を上書きしてください。検出モデルは差し替え用ZIPに含まれていないため、既存の `models` を引き継ぎます。別の人へ配布するときは検出モデルを追加し、`.venv` は配布先のPCで作成してください。
 
 検出に必要なファイル：

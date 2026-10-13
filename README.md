@@ -5,9 +5,11 @@
 
 ## Windowsで使う
 
-1. このリポジトリを取得する（GitHubの **Code → Download ZIP**、またはgit clone）。
-2. `veil_offline/run.bat` を実行する。Python 3.10以上が必要です。
-3. 初回のみ `veil_offline/.venv` にライブラリを導入します。画像処理はこのPC内で行います。
+1. [Releases](https://github.com/laptan45p/45P-Batch-Automatic-Censoring/releases/latest) の **`veil-offline.zip`** をダウンロードして解凍します（検出モデル2つを同梱）。
+2. 解凍した `veil-offline/run.bat` を実行します。Python 3.10以上が必要です。
+3. 初回のみフォルダ内の `.venv` にライブラリを導入します。画像処理はこのPC内で行います。
+
+ソースから使う場合は、GitHubの **Code → Download ZIP** またはgit cloneで取得し、`veil_offline/run.bat` を実行してください。
 
 検出モデル2つは `veil_offline/models` に含まれています。起動用ファイルと同じフォルダ構成を維持してください。
 
