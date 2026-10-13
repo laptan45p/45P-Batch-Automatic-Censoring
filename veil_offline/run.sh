@@ -15,10 +15,11 @@ if [ ! -x ".venv/bin/python" ]; then
 fi
 VPY=".venv/bin/python"
 
-if ! "$VPY" -c "import gradio,onnxruntime,PIL,numpy" >/dev/null 2>&1; then
+if ! "$VPY" -c "import gradio,onnxruntime,PIL,numpy,cv2" >/dev/null 2>&1; then
   echo "First run: installing libraries into .venv"
   "$VPY" -m pip install --upgrade pip
-  "$VPY" -m pip install -r requirements.txt
+  "$VPY" -m pip install -r requirements.txt || exit 1
 fi
 
 exec "$VPY" app.py
+

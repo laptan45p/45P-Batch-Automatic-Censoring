@@ -6,6 +6,7 @@ import sys
 import threading
 import webbrowser
 import zipfile
+import uuid
 from pathlib import Path
 from tempfile import gettempdir
 
@@ -57,6 +58,13 @@ CSS = """
 footer { display: none !important; }
 .gradio-container { max-width: 1280px !important; }
 #veil-gallery { min-height: 420px !important; }
+#veil-mask-data { display: none !important; }
+.veil-canvas-tools { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.veil-canvas-tools button { padding:8px 12px; border:1px solid #555; border-radius:6px; cursor:pointer; }
+.veil-canvas-tools button[aria-pressed="true"] { background:#8c2040; color:#fff; }
+.veil-canvas-tools label { display:flex; gap:6px; align-items:center; }
+.veil-canvas-view { text-align:center; overflow:auto; max-height:650px; background:#202126; border-radius:6px; }
+.veil-canvas-view canvas { display:block; margin:auto; max-width:100%; max-height:650px; width:auto; height:auto; touch-action:none; cursor:crosshair; }
 #veil-slider .limit_height img,
 #veil-slider img.small,
 #veil-slider img.preview,
@@ -140,12 +148,33 @@ def process(
     style_ja,
     shape_ja,
     show_boxes,
+    refine=False,
+    contour_margin=6,
+    contour_method_ja="簡易（追加モデル不要）",
+    sam_type="vit_b",
+    sam_device_ja="CPU",
     progress=gr.Progress(),
 ):
     mode = "photo" if mode_label == "実写" else "illust"
     parts = [JA_TO_PART[p] for p in (parts_ja or []) if p in JA_TO_PART]
     style = "blur" if style_ja == "ぼかし" else "pixel"
-    shape = "rect" if shape_ja == "矩形" else "ellipse"
+    shape = {"矩形": "rect", "楕円": "ellipse", "輪郭": "contour"}.get(shape_ja, "ellipse")
+    contour_method = "sam" if contour_method_ja == "SAM（追加モデル）" else "grabcut"
+    if shape == "contour" and contour_method == "sam":
+        from contour import sam_model_path
+        try:
+            checkpoint = sam_model_path(str(sam_type))
+        except ValueError as exc:
+            raise gr.Error(str(exc)) from exc
+        if not checkpoint.is_file():
+            raise gr.Error(f"SAMモデルがありません: {checkpoint.name}。modelsフォルダに入れてください。vit_bはinstall_sam.batで導入できます。")
+        try:
+            import torch
+            import segment_anything
+        except ImportError as exc:
+            raise gr.Error("SAMの追加ライブラリがありません。install_sam.bat を実行してください。") from exc
+        if sam_device_ja == "GPU（CUDA）" and not torch.cuda.is_available():
+            raise gr.Error("CUDA対応のPyTorchまたはGPUが見つかりません。CPUを選択してください。")
 
     if not parts:
         raise gr.Error("モザイク対象を1つ以上選んでください")
@@ -181,6 +210,9 @@ def process(
             dest_root.mkdir(parents=True, exist_ok=True)
 
     gallery = []
+    records = []
+    run_dir = OUT_DIR / uuid.uuid4().hex
+    run_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     zip_entries: list[tuple[str, Path]] = []
     slider = None
@@ -201,22 +233,28 @@ def process(
                 style=style,
                 shape=shape,
                 show_boxes=bool(show_boxes),
+                refine=bool(refine),
+                contour_margin=int(contour_margin),
+                contour_method=contour_method,
+                sam_type=str(sam_type),
+                sam_device="cuda" if sam_device_ja == "GPU（CUDA）" else "cpu",
             )
         except Exception as e:
             rows.append([src.name, "失敗", str(e)])
             continue
 
-        out_path = OUT_DIR / f"{src.stem}_{i}_mosaic.png"
+        out_path = run_dir / f"{src.stem}_{i}_mosaic.png"
         result.save(out_path, "PNG")
         gallery.append((str(out_path), src.name))
         zip_entries.append((str(mosaic_relpath(src, src_root)).replace("\\", "/"), out_path))
         mosaic_total += len(mosaicked)
         hits = "、".join(
-            f"{PART_JA.get(d.part, d.part)} {d.score * 100:.0f}%" for d in detections
+            f"{PART_JA.get(d.part, d.part)} {d.score * 100:.0f}% {d.mask_status}" for d in detections
         ) or "検出なし"
         rows.append([src.name, f"{len(mosaicked)} 箇所", hits])
+        orig_path = run_dir / f"{src.stem}_{i}_orig.png"
+        original.save(orig_path, "PNG")
         if slider is None:
-            orig_path = OUT_DIR / f"{src.stem}_{i}_orig.png"
             if original.mode != "RGB":
                 original = original.convert("RGB")
             if result.mode != "RGB":
@@ -227,17 +265,21 @@ def process(
             result.save(out_path, "PNG")
             slider = (str(orig_path), str(out_path))
 
+        dest = None
         if dest_root is not None:
             rel = mosaic_relpath(src, src_root)
             dest = dest_root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             result.save(dest, "PNG")
             saved_local += 1
+        records.append({"output": str(out_path), "original": str(orig_path),
+                        "caption": src.name, "archive": zip_entries[-1][0],
+                        "local": str(dest) if dest is not None else None})
 
     if not zip_entries:
         raise gr.Error("処理できた画像がありません")
 
-    zip_path = OUT_DIR / "veil_mosaic.zip"
+    zip_path = run_dir / "veil_mosaic.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
         for name, path in zip_entries:
             zf.write(path, arcname=name)
@@ -259,7 +301,123 @@ def process(
         str(zip_path),
         "\n".join(lines),
         status,
+        {"records": records, "selected": None, "zip": str(zip_path),
+         "detection_settings": {"mode": mode, "parts": parts,
+             "score_threshold": float(threshold), "expand": float(expand),
+             "shape": shape, "contour_margin": int(contour_margin),
+             "contour_method": contour_method, "sam_type": str(sam_type),
+             "sam_device": "cuda" if sam_device_ja == "GPU（CUDA）" else "cpu"}},
     )
+
+
+def select_manual_image(batch, evt: gr.SelectData):
+    # Closing a gallery preview can emit a deselection event; do not reload on it.
+    if not getattr(evt, "selected", True):
+        return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+    index = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+    return load_manual_image(batch, index)
+
+
+def load_manual_image(batch, index):
+    if not batch or not batch.get("records"):
+        raise gr.Error("先に自動処理を実行してください。")
+    if not isinstance(index, int) or not 0 <= index < len(batch["records"]):
+        raise gr.Error("画像を選び直してください。")
+    batch = dict(batch, selected=index, last_selected=index)
+    record = batch["records"][index]
+    with Image.open(record["output"]) as im:
+        background = im.convert("RGB").copy()
+    from canvas_editor import render_canvas
+    return (render_canvas(background,Path(record["output"]).name),
+            batch, f"**{record['caption']}** を手動修正します。",
+            gr.update(value=(record["original"],record["output"]),visible=True))
+
+
+def clear_manual_editor(batch):
+    if batch:
+        batch = dict(batch, last_selected=batch.get("selected")
+                     if batch.get("selected") is not None else batch.get("last_selected"),
+                     selected=None)
+    return (batch, gr.update(selected_index=None), None,
+            "編集画像をクリアしました。処理結果を選び直すか「編集画像を読み直す」を押してください。")
+
+
+def reload_manual_image(batch):
+    if not batch or not batch.get("records"):
+        return (gr.skip(),gr.skip(),
+                "処理結果がまだありません。先に「モザイクを実行」で画像を処理してください。",
+                gr.skip())
+    index = batch.get("last_selected")
+    if not isinstance(index,int) or not 0 <= index < len(batch["records"]):
+        index = batch.get("selected")
+    if not isinstance(index,int) or not 0 <= index < len(batch["records"]):
+        index = 0
+    return load_manual_image(batch,index)
+
+
+def save_manual_edit(editor_value, batch, style_ja, block_size, fill_enclosed, margin,
+                     action="範囲内を再検出"):
+    if not batch or batch.get("selected") is None:
+        raise gr.Error("処理結果の画像をクリックして選んでください。")
+    record = batch["records"][batch["selected"]]
+    output = Path(record["output"])
+    with Image.open(output) as im:
+        current = im.convert("RGB").copy()
+    if isinstance(editor_value,str):
+        from canvas_editor import decode_canvas
+        try:
+            editor_value = decode_canvas(editor_value,current,output.name)
+        except ValueError as exc:
+            raise gr.Error(str(exc)) from exc
+    background = (editor_value or {}).get("background")
+    if not isinstance(background, Image.Image) or background.size != current.size:
+        raise gr.Error("画像を選び直してください。サイズ変更はできません。")
+    import numpy as np
+    if not np.array_equal(np.asarray(background.convert("RGB")), np.asarray(current)):
+        raise gr.Error("選択画像と編集画像が一致しません。処理結果から選び直してください。")
+    from manual import apply_manual, redetect_manual
+    detection_message = ""
+    try:
+        style = "blur" if style_ja == "ぼかし" else "pixel"
+        if action == "範囲内を再検出":
+            if not batch.get("detection_settings"):
+                raise ValueError("再検出の設定がありません。自動処理からやり直してください。")
+            with Image.open(record["original"]) as im:
+                original = im.convert("RGB").copy()
+            result,found,changed = redetect_manual(original,current,editor_value,
+                batch["detection_settings"],style,block_size,fill_enclosed,margin)
+            if not changed:
+                message = ("範囲内で対象を検出できませんでした。" if not found else
+                           f"対象候補は{found}箇所ありましたが、選択範囲内に追加の処理画素がありませんでした。")
+                message += "画像は変更していません。必要なら「範囲全体にかける」を選んで保存してください。"
+                return (gr.skip(),[(item["output"],item["caption"]) for item in batch["records"]],
+                        batch["zip"],str(output),message,batch,
+                        gr.update(value=(record["original"],str(output)),visible=True))
+            detection_message = f"範囲内の再検出：対象 {found} 箇所。 "
+        else:
+            result = apply_manual(current,editor_value,style,block_size,fill_enclosed,margin)
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        raise gr.Error(str(exc)) from exc
+    # Use new result paths to avoid the browser reusing an old image or ZIP.
+    updated = output.with_name(output.stem + "_" + uuid.uuid4().hex[:8] + ".png")
+    result.save(updated,"PNG")
+    if record.get("local"):
+        result.save(record["local"],"PNG")
+    records = [dict(item) for item in batch["records"]]
+    records[batch["selected"]]["output"] = str(updated)
+    zip_path = updated.parent / ("veil_mosaic_" + uuid.uuid4().hex[:8] + ".zip")
+    with zipfile.ZipFile(zip_path,"w",compression=zipfile.ZIP_STORED) as zf:
+        for item in records:
+            zf.write(item["output"],arcname=item["archive"])
+    new_batch = dict(batch,records=records,zip=str(zip_path))
+    message = detection_message + f"**{record['caption']}** の手動修正を保存しました。ZIPも更新済みです。"
+    if record.get("local"):
+        message += " 指定した保存先にも反映しました。"
+    from canvas_editor import render_canvas
+    return (render_canvas(result,updated.name),
+            [(item["output"],item["caption"]) for item in records],str(zip_path),
+            str(updated),message,new_batch,
+            gr.update(value=(record["original"],str(updated)),visible=True))
 
 
 def on_mode(mode_label: str):
@@ -286,7 +444,8 @@ def build() -> gr.Blocks:
         input_background_fill_dark="#1c1d22",
     )
 
-    with gr.Blocks(title="ヴェール", theme=theme, css=CSS) as demo:
+    with gr.Blocks(title="ヴェール", theme=theme, css=CSS,
+                   js=(ROOT / "canvas_editor.js").read_text(encoding="utf-8")) as demo:
         pack = offline_zip_path()
         if pack is not None:
             with gr.Row():
@@ -341,7 +500,17 @@ def build() -> gr.Blocks:
                 block_size = gr.Slider(8, 48, value=18, step=1, label="モザイク粗さ")
                 with gr.Row():
                     style = gr.Radio(["ピクセル", "ぼかし"], value="ピクセル", label="種類")
-                    shape = gr.Radio(["楕円", "矩形"], value="楕円", label="形状")
+                    shape = gr.Radio(["楕円", "矩形", "輪郭"], value="輪郭", label="形状")
+                refine = gr.Checkbox(label="検出した周辺を拡大して再検出（時間が増えます）", value=True)
+                with gr.Accordion("輪郭の設定", open=True):
+                    contour_margin = gr.Slider(0, 64, value=6, step=1, label="輪郭の外側の余白（px）")
+                    contour_method = gr.Radio(
+                        ["簡易（追加モデル不要）", "SAM（追加モデル）"],
+                        value="簡易（追加モデル不要）", label="輪郭抽出方法")
+                    gr.Markdown("簡易方式は色の差を使います。塗りや重なりによって範囲がずれるため、比較画像で確認してください。輪郭が不確実な場合は矩形に切り替わります。")
+                    sam_type = gr.Dropdown(["vit_b", "vit_l", "vit_h"], value="vit_b", label="SAMモデルの種類")
+                    gr.Markdown("SAMモデルは `models` フォルダから自動で読み込みます。`vit_b` は `install_sam.bat` で導入できます。`vit_l`・`vit_h` は対応する公式モデルを同じフォルダに入れてください。")
+                    sam_device = gr.Radio(["CPU", "GPU（CUDA）"], value="CPU", label="SAMの実行環境")
                 show_boxes = gr.Checkbox(label="検出枠を重ねる", value=False)
                 run = gr.Button("モザイクを実行", variant="primary")
             with gr.Column(scale=8, min_width=360):
@@ -367,6 +536,20 @@ def build() -> gr.Blocks:
                 )
                 table = gr.Markdown("")
                 zip_out = gr.File(label="ZIPで保存")
+                batch_state = gr.State(None)
+                with gr.Accordion("検出漏れを手動で修正",open=True):
+                    gr.Markdown("処理結果の画像をクリックして選び、漏れた場所をブラシで**閉じた線で囲んでください**。その部分を元画像から切り出して再検出します。消しゴムは選択範囲を消します。")
+                    manual_status = gr.Markdown("処理結果から修正する画像を選んでください。")
+                    manual_reload = gr.Button("編集画像を読み直す（未選択なら最初の画像）")
+                    manual_editor = gr.HTML("処理結果から修正する画像を選んでください。",elem_id="veil-editor")
+                    manual_mask_data = gr.Textbox(value="",elem_id="veil-mask-data",interactive=True)
+                    manual_close = gr.Button("編集画像を閉じる")
+                    fill_enclosed = gr.Checkbox(label="囲んだ線の内側も処理する（線を閉じてください）",value=True)
+                    manual_margin = gr.Slider(0,64,value=0,step=1,label="手動範囲の外側の余白（px）")
+                    manual_action = gr.Radio(["範囲内を再検出","範囲全体にかける"],value="範囲内を再検出",label="手動範囲の処理方法")
+                    manual_save = gr.Button("選択した範囲を処理して保存",variant="primary")
+                    manual_download = gr.File(label="手動修正した画像を保存")
+                    gr.Markdown("再検出は自動処理時の検出モデル・対象・信頼度・形状・輪郭設定を使用します。種類・粗さは左側の現在の設定を使用します。検出なしなら選択範囲を残し、画像は変更しません。「範囲全体にかける」はAIを使わず指定範囲を処理します。")
 
         mode.change(on_mode, inputs=mode, outputs=[parts, threshold, expand])
         run.click(
@@ -386,9 +569,30 @@ def build() -> gr.Blocks:
                 style,
                 shape,
                 show_boxes,
+                refine,
+                contour_margin,
+                contour_method,
+                sam_type,
+                sam_device,
             ],
-            outputs=[slider, gallery, zip_out, table, status],
-        )
+            outputs=[slider, gallery, zip_out, table, status, batch_state],
+            concurrency_id="veil_edit", concurrency_limit=1,
+        ).then(lambda: ("処理結果から修正する画像を選んでください。",None,"処理結果から修正する画像を選んでください。"),
+               outputs=[manual_editor,manual_download,manual_status])
+        gallery.select(select_manual_image,inputs=[batch_state],
+                       outputs=[manual_editor,batch_state,manual_status,slider],
+                       concurrency_id="veil_edit",concurrency_limit=1)
+        manual_close.click(clear_manual_editor,inputs=[batch_state],
+                            outputs=[batch_state,gallery,manual_download,manual_status],
+                            concurrency_id="veil_edit",concurrency_limit=1
+                            ).then(lambda: ("処理結果から修正する画像を選んでください。",""),outputs=[manual_editor,manual_mask_data])
+        manual_reload.click(reload_manual_image,inputs=[batch_state],
+                            outputs=[manual_editor,batch_state,manual_status,slider],
+                            concurrency_id="veil_edit",concurrency_limit=1)
+        manual_save.click(save_manual_edit,
+                          inputs=[manual_mask_data,batch_state,style,block_size,fill_enclosed,manual_margin,manual_action],
+                          outputs=[manual_editor,gallery,zip_out,manual_download,manual_status,batch_state,slider],
+                          concurrency_id="veil_edit",concurrency_limit=1)
     return demo
 
 
@@ -433,3 +637,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

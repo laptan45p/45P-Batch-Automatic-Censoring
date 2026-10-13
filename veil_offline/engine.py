@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import onnxruntime as ort
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 MAX_SIDE = 4096
@@ -75,7 +74,7 @@ MODELS = {
     },
 }
 
-_sessions: dict[str, ort.InferenceSession] = {}
+_sessions: dict[str, object] = {}
 
 
 @dataclass
@@ -92,15 +91,17 @@ class Detection:
     raw: str
     score: float
     box: Box
+    mask_status: str = ""
 
 
-def get_session(mode: str) -> ort.InferenceSession:
+def get_session(mode: str):
     sess = _sessions.get(mode)
     if sess is None:
         spec = MODELS[mode]
         path = spec["path"]
         if not path.is_file():
             raise FileNotFoundError(f"モデルが見つかりません: {path}")
+        import onnxruntime as ort
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         so.intra_op_num_threads = 0
@@ -263,17 +264,24 @@ def _postprocess(
         y = (cy - bh / 2) * scale_y
         w = bw * scale_x
         h = bh * scale_y
+        right = min(float(width), x + w)
+        bottom = min(float(height), y + h)
         x = min(max(0.0, x), float(width))
         y = min(max(0.0, y), float(height))
-        w = min(w, width - x)
-        h = min(h, height - y)
+        w = right - x
+        h = bottom - y
         if w < 1 or h < 1:
             continue
         boxes.append(Box(x, y, w, h))
         scores.append(best)
         class_ids.append(class_id)
 
-    keep = nms_boxes(boxes, scores, score_threshold, float(spec["nms_iou"]))
+    keep = []
+    for class_id in set(class_ids):
+        indices = [i for i, c in enumerate(class_ids) if c == class_id]
+        keep.extend(indices[i] for i in nms_boxes(
+            [boxes[i] for i in indices], [scores[i] for i in indices],
+            score_threshold, float(spec["nms_iou"])))
     mapping: dict[str, str] = spec["map"]  # type: ignore[assignment]
     detections: list[Detection] = []
     for i in keep:
@@ -350,6 +358,11 @@ def detect_and_censor(
     style: str,
     shape: str,
     show_boxes: bool,
+    refine: bool = False,
+    contour_margin: int = 6,
+    contour_method: str = "grabcut",
+    sam_type: str = "vit_b",
+    sam_device: str = "cpu",
 ) -> tuple[Image.Image, list[Detection], list[Detection]]:
     spec = MODELS[mode]
     session = get_session(mode)
@@ -363,14 +376,46 @@ def detect_and_censor(
     detections = _postprocess(
         out, mode, x_pad, y_pad, im.width, im.height, size, score_threshold
     )
+    if refine:
+        refined = []
+        for det in detections:
+            crop_box = expand_box(det.box, 2.5, im.width, im.height)
+            x, y, cw, ch = _clip_box(crop_box, im.width, im.height)
+            crop = im.crop((x, y, x + cw, y + ch))
+            tensor2, xp, yp = (_letterbox(crop, size) if mode == "photo" else _stretch(crop, size))
+            candidates = _postprocess(session.run(None, {inp_name: tensor2})[0],
+                                      mode, xp, yp, cw, ch, size, score_threshold)
+            matches = []
+            for candidate in candidates:
+                candidate.box.x += x
+                candidate.box.y += y
+                overlap = _iou(det.box, candidate.box)
+                if candidate.raw == det.raw and overlap >= 0.3:
+                    matches.append((overlap, candidate))
+            refined.append(max(matches, key=lambda t: t[0])[1] if matches else det)
+        detections = refined
+    segmenter = None
+    if shape == "contour":
+        from contour import ContourSegmenter
+        segmenter = ContourSegmenter(im, contour_method, sam_type, sam_device)
     result = im.copy()
     selected = set(parts)
     mosaicked = [d for d in detections if d.part in selected]
+    mosaicked_image = _mosaic_region(im, style, block_size) if segmenter and mosaicked else None
     for det in mosaicked:
         box = expand_box(det.box, expand, result.width, result.height)
-        apply_mosaic(result, box, style, shape, block_size)
+        if segmenter is None:
+            apply_mosaic(result, box, style, shape, block_size)
+        else:
+            mask, det.mask_status = segmenter.mask(det.box, box, contour_margin)
+            # All masks come from the original image, never already censored pixels.
+            if mask is None:
+                apply_mosaic(result, box, style, "rect", block_size)
+            else:
+                result.paste(mosaicked_image, (0, 0), mask)
     if show_boxes:
         for det in detections:
             box = expand_box(det.box, expand, result.width, result.height)
             draw_debug(result, box, det.raw, det.score)
     return result, detections, mosaicked
+

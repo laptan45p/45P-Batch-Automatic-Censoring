@@ -1,41 +1,57 @@
-# ヴェール（パソコン・オフライン）
+# ヴェール：オフライン画像モザイクツール
 
-イラストや実写の局部を見つけて、モザイクをかけます。  
-画像もモデルも、**このパソコンから外には出ません**。
+画像をローカルで検出し、モザイクをかけるツールです。輪郭に沿った処理と、検出漏れを囲んで再検出する手動修正に対応します。
 
-## 最初の一回だけ
+## 起動・更新
 
-Python 3.10 以上が必要です。
+Windowsでは `run.bat` を実行してください。Python 3.10以上が必要です。初回はこのフォルダの `.venv` に必要なライブラリを導入するため、ネット接続が必要です。
 
-**Windows** では `run.bat` をダブルクリックしてください。  
-初回だけ、このフォルダの中に `.venv` を作り、ライブラリをそこに入れます（ネットが要ります）。二回目からはオフラインです。ほかの Python 環境には触れません。
+差し替え用ZIPを使用する場合は、現在使っているフォルダへ中身を上書きしてください。検出モデルは差し替え用ZIPに含まれていないため、既存の `models` を引き継ぎます。別の人へ配布するときは検出モデルを追加し、`.venv` は配布先のPCで作成してください。
 
-手で入れる場合:
+検出に必要なファイル：
 
-```bash
-cd veil_offline
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python app.py
+- `models/anime-censor-n.onnx`：イラスト用
+- `models/nudenet-320n.onnx`：実写用
+
+## SAMモデルの入手先と配置
+
+SAMは輪郭を切り抜くための追加AIです。簡易方式では不要です。このツールは**初代SAM**の以下3種類に対応します。SAM 2のモデルは使用できません。
+
+最初に `run.bat` で環境を作り、Gitを導入済みの環境で `install_sam.bat` を実行してください。SAMのライブラリに加えて、軽量な **vit_b** モデルを `models` に自動ダウンロードします。**vit_l・vit_hは下のリンクから手動ダウンロード**してください。手動でモデルを入れた場合もSAMのライブラリ導入は必要です。
+
+| 画面で選ぶ種類 | 公式ダウンロード | ファイル容量の目安 |
+| --- | --- | --- |
+| `vit_b` | [sam_vit_b_01ec64.pth](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth) | 約375MB |
+| `vit_l` | [sam_vit_l_0b3195.pth](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth) | 約1.2GB |
+| `vit_h` | [sam_vit_h_4b8939.pth](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth) | 約2.4GB |
+
+公式説明：[facebookresearch/segment-anything](https://github.com/facebookresearch/segment-anything)
+
+ダウンロードしたファイルは**名前を変えずに、`app.py` と同じ階層にある `models` フォルダへ入れてください。** 3種類すべてをそろえる必要はありません。
+
+```text
+veil-offline/
+├─ app.py
+├─ run.bat
+├─ install_sam.bat
+└─ models/
+   ├─ anime-censor-n.onnx
+   ├─ nudenet-320n.onnx
+   ├─ sam_vit_b_01ec64.pth
+   ├─ sam_vit_l_0b3195.pth
+   └─ sam_vit_h_4b8939.pth
 ```
 
-しばらくするとブラウザが開きます。
+例えば、ツールを `F:\veil-offline` に置いている場合、vit_lは `F:\veil-offline\models\sam_vit_l_0b3195.pth` に配置します。
 
-## 使い方
+画面で形状を「輪郭」、輪郭抽出方法を「SAM（追加モデル）」にし、入れたファイルに対応するモデル種類を選びます。パスの入力は不要です。
 
-1. イラストか実写かを選ぶ
-2. 次のどれかで画像を渡す
-   - 画像を何枚かドロップする
-   - **フォルダを選ぶ**
-   - **フォルダの場所を貼る**（エクスプローラのアドレスバー）  
-     例: `C:\Pictures\batch`
-3. 「モザイクを実行」を押す
-4. 結果は `入力フォルダ/_mosaic/` に入ります。ZIP でも落とせます
+SAMの実行環境はCPUとGPU（CUDA）から選べます。GPUを使用するにはCUDA対応PyTorchが必要です。導入方法は[PyTorch公式](https://pytorch.org/get-started/locally/)で確認してください。対象検出と拡大再検出はCPUで行います。表の容量はモデルファイルの大きさで、必要なRAM・VRAM量とは異なります。
 
-一度に 200 枚まで。一枚ずつ処理します。元のファイルはいじりません。
+## 手動修正
 
-## オフラインについて
+自動処理の結果から画像を選び、漏れた場所をペンで閉じた線で囲みます。「範囲内を再検出」を選んで「選択した範囲を処理して保存」を押すと、見つかった対象だけにモザイクを追加します。検出されなければ、必要に応じて「範囲全体にかける」へ切り替えられます。
 
-- モデルは `models/` に入っているので、外から取りにいきません
-- 共有用の公開リンクは使いません
-- 初回のライブラリ導入以外、ネットは不要です
+拡大・縮小は＋／−またはCtrl＋ホイールで操作できます。修正後はZIPと指定した保存先にも反映されます。
+
+詳しい変更内容・設定・検証範囲は [UPDATE.md](UPDATE.md) を参照してください。

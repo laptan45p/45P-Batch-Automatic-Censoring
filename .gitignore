@@ -3,3 +3,13 @@ node_modules/
 .github_repo
 .env
 .env.*
+
+# Local Python environment and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded SAM models and generated images
+veil_offline/models/sam_vit_*.pth
+_mosaic/
+

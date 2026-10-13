@@ -55,7 +55,7 @@ if not exist "%VPY%" (
   )
 )
 
-"%VPY%" -c "import gradio,onnxruntime,PIL,numpy" >nul 2>&1
+"%VPY%" -c "import gradio,onnxruntime,PIL,numpy,cv2" >nul 2>&1
 if errorlevel 1 (
   echo First run: installing libraries into .venv
   echo Shokai dake library wo iremasu. Internet required.
@@ -74,3 +74,4 @@ if errorlevel 1 (
   echo app.py failed.
 )
 pause
+
