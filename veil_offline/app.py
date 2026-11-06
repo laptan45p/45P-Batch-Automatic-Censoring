@@ -126,11 +126,23 @@ def collect_inputs(files, folder_upload, folder_path: str, recursive: bool) -> l
     return found[:MAX_FILES]
 
 
-def mosaic_relpath(src: Path, root: Path | None) -> Path:
+def export_image(image: Image.Image, path: Path, output_format: str) -> None:
+    if output_format == "JPEG":
+        # Flatten transparency onto white; JPEG has no alpha channel.
+        rgba = image.convert("RGBA")
+        rgb = Image.new("RGB", image.size, "white")
+        rgb.paste(rgba, mask=rgba.getchannel("A"))
+        rgb.save(path, "JPEG", quality=95, subsampling=0)
+    else:
+        image.save(path, "PNG")
+
+
+def mosaic_relpath(src: Path, root: Path | None, output_format: str = "PNG") -> Path:
+    suffix = ".jpg" if output_format == "JPEG" else ".png"
     if root and root in src.parents:
         rel = src.relative_to(root)
-        return rel.with_name(rel.stem + "_mosaic.png")
-    return Path(f"{src.stem}_mosaic.png")
+        return rel.with_name(rel.stem + "_mosaic" + suffix)
+    return Path(f"{src.stem}_mosaic{suffix}")
 
 
 def process(
@@ -153,8 +165,11 @@ def process(
     contour_method_ja="簡易（追加モデル不要）",
     sam_type="vit_b",
     sam_device_ja="CPU",
+    output_format="PNG",
     progress=gr.Progress(),
 ):
+    if output_format not in ("PNG", "JPEG"):
+        raise gr.Error("保存形式はPNGまたはJPEGを選んでください")
     mode = "photo" if mode_label == "実写" else "illust"
     parts = [JA_TO_PART[p] for p in (parts_ja or []) if p in JA_TO_PART]
     style = "blur" if style_ja == "ぼかし" else "pixel"
@@ -246,7 +261,10 @@ def process(
         out_path = run_dir / f"{src.stem}_{i}_mosaic.png"
         result.save(out_path, "PNG")
         gallery.append((str(out_path), src.name))
-        zip_entries.append((str(mosaic_relpath(src, src_root)).replace("\\", "/"), out_path))
+        # Keep PNG working images so repeated manual edits never recompress JPEG.
+        export_path = out_path.with_suffix(".jpg") if output_format == "JPEG" else out_path
+        export_image(result, export_path, output_format)
+        zip_entries.append((str(mosaic_relpath(src, src_root, output_format)).replace("\\", "/"), export_path))
         mosaic_total += len(mosaicked)
         hits = "、".join(
             f"{PART_JA.get(d.part, d.part)} {d.score * 100:.0f}% {d.mask_status}" for d in detections
@@ -267,13 +285,14 @@ def process(
 
         dest = None
         if dest_root is not None:
-            rel = mosaic_relpath(src, src_root)
+            rel = mosaic_relpath(src, src_root, output_format)
             dest = dest_root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            result.save(dest, "PNG")
+            export_image(result, dest, output_format)
             saved_local += 1
         records.append({"output": str(out_path), "original": str(orig_path),
                         "caption": src.name, "archive": zip_entries[-1][0],
+                        "export": str(export_path), "output_format": output_format,
                         "local": str(dest) if dest is not None else None})
 
     if not zip_entries:
@@ -391,7 +410,7 @@ def save_manual_edit(editor_value, batch, style_ja, block_size, fill_enclosed, m
                            f"対象候補は{found}箇所ありましたが、選択範囲内に追加の処理画素がありませんでした。")
                 message += "画像は変更していません。必要なら「範囲全体にかける」を選んで保存してください。"
                 return (gr.skip(),[(item["output"],item["caption"]) for item in batch["records"]],
-                        batch["zip"],str(output),message,batch,
+                        batch["zip"],record.get("export",str(output)),message,batch,
                         gr.update(value=(record["original"],str(output)),visible=True))
             detection_message = f"範囲内の再検出：対象 {found} 箇所。 "
         else:
@@ -401,14 +420,18 @@ def save_manual_edit(editor_value, batch, style_ja, block_size, fill_enclosed, m
     # Use new result paths to avoid the browser reusing an old image or ZIP.
     updated = output.with_name(output.stem + "_" + uuid.uuid4().hex[:8] + ".png")
     result.save(updated,"PNG")
+    output_format = record.get("output_format", "PNG")
+    exported = updated.with_suffix(".jpg") if output_format == "JPEG" else updated
+    export_image(result, exported, output_format)
     if record.get("local"):
-        result.save(record["local"],"PNG")
+        export_image(result, Path(record["local"]), output_format)
     records = [dict(item) for item in batch["records"]]
     records[batch["selected"]]["output"] = str(updated)
+    records[batch["selected"]]["export"] = str(exported)
     zip_path = updated.parent / ("veil_mosaic_" + uuid.uuid4().hex[:8] + ".zip")
     with zipfile.ZipFile(zip_path,"w",compression=zipfile.ZIP_STORED) as zf:
         for item in records:
-            zf.write(item["output"],arcname=item["archive"])
+            zf.write(item.get("export", item["output"]),arcname=item["archive"])
     new_batch = dict(batch,records=records,zip=str(zip_path))
     message = detection_message + f"**{record['caption']}** の手動修正を保存しました。ZIPも更新済みです。"
     if record.get("local"):
@@ -416,7 +439,7 @@ def save_manual_edit(editor_value, batch, style_ja, block_size, fill_enclosed, m
     from canvas_editor import render_canvas
     return (render_canvas(result,updated.name),
             [(item["output"],item["caption"]) for item in records],str(zip_path),
-            str(updated),message,new_batch,
+            str(exported),message,new_batch,
             gr.update(value=(record["original"],str(updated)),visible=True))
 
 
@@ -492,6 +515,8 @@ def build() -> gr.Blocks:
                     label="指定したフォルダに保存する",
                     value=True,
                 )
+                output_format = gr.Radio(["PNG", "JPEG"], value="PNG", label="保存形式")
+                gr.Markdown("JPEGは品質95で保存します。手動修正も処理時に選んだ形式で保存します。")
                 parts = gr.CheckboxGroup(
                     ILLUST_CHOICES, value=["女性器", "男性器"], label="モザイク対象"
                 )
@@ -574,6 +599,7 @@ def build() -> gr.Blocks:
                 contour_method,
                 sam_type,
                 sam_device,
+                output_format,
             ],
             outputs=[slider, gallery, zip_out, table, status, batch_state],
             concurrency_id="veil_edit", concurrency_limit=1,
